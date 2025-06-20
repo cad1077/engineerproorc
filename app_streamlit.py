@@ -7,7 +7,7 @@ from io import BytesIO
 
 st.title("Engineer.Pro Orçamentos")
 
-api_url = "http://localhost:8000"
+api_url = "https://engineerpro-backend.onrender.com"
 
 # Inicializa o histórico do chat no session state
 if 'chat_history' not in st.session_state:
