@@ -1,43 +1,74 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
+import json
+from sentence_transformers import SentenceTransformer
+from sqlalchemy import create_engine, Column, Integer, String, Float
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 
-# A classe BaseModel deve ser a mesma que você já tem para a sua lógica
-class Orcamento(BaseModel):
-    id: int
-    titulo: str
-    descricao: str
+# Criação do banco de dados e modelo
+Base = declarative_base()
 
-# Esta é a parte que foi alterada: O modelo é instanciado aqui
-# com o nome 'all-MiniLM-L6-v2', que é otimizado para economia de memória.
+class SinapiItem(Base):
+    __tablename__ = 'sinapi_items'
+    id = Column(Integer, primary_key=True)
+    codigo = Column(String(50), index=True)
+    descricao = Column(String)
+    unidade = Column(String(20))
+    preco_unitario = Column(Float)
+    
+engine = create_engine('sqlite:///sinapi.db')
+Base.metadata.create_all(engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Carregamento do modelo de embedding OTIMIZADO para economia de memória
+# Essa é a mudança mais importante!
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# O restante do seu código, como a conexão com o banco de dados e
-# o carregamento do índice FAISS, deve vir aqui.
-# Por exemplo:
-# ...
+# Carregamento dos dados e do índice FAISS
+sinapi_data = []
+try:
+    with open("sinapi_dados.json", "r", encoding="utf-8") as f:
+        sinapi_data = json.load(f)
+except FileNotFoundError:
+    print("Arquivo sinapi_dados.json não encontrado. Certifique-se de que ele está no mesmo diretório.")
+    
+embeddings = np.array([item['embedding'] for item in sinapi_data]).astype("float32")
+faiss_index = faiss.IndexFlatL2(embeddings.shape[1])
+faiss_index.add(embeddings)
 
 app = FastAPI()
 
 class Query(BaseModel):
-    user_input: str
+    query: str
 
-@app.post("/buscar_orcamento")
-def buscar_orcamento(query: Query):
-    # Processa a entrada do usuário para gerar o embedding
-    embedding_query = model.encode(query.user_input)
+@app.get("/items")
+def get_all_items():
+    return sinapi_data
 
-    # Converte o embedding para o formato que o FAISS espera
-    embedding_query = np.array([embedding_query]).astype("float32")
+@app.get("/items/search_semantic/")
+def search_semantic(query: str):
+    try:
+        query_embedding = model.encode(query, convert_to_tensor=True)
+        query_embedding_np = query_embedding.cpu().numpy().astype("float32").reshape(1, -1)
+        distances, indices = faiss_index.search(query_embedding_np, k=5)
+        
+        results = []
+        for i in range(5):
+            if indices[0][i] != -1:
+                item = sinapi_data[indices[0][i]]
+                results.append({
+                    "descricao": item["descricao"],
+                    "unidade": item["unidade"],
+                    "preco_unitario": item["preco_unitario"],
+                    "preco_total": item["preco_unitario"],
+                    "quantidade": 1,
+                })
+        return results
+    except Exception as e:
+        return {"error": str(e)}
 
-    # Realiza a busca por similaridade usando o índice FAISS
-    # O código abaixo é um exemplo e deve ser adaptado à sua lógica de busca
-    # distances, indices = index.search(embedding_query, k=5) 
-    
-    # Exemplo de retorno
-    return {"resultado": "Seu resultado da busca aqui"}
-
-# O restante dos seus endpoints FastAPI vêm aqui
+# Adicione outros endpoints aqui se houver
 # ...
